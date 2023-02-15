@@ -8,11 +8,20 @@ import argparse
 import json
 
 from dataset import TokenizedDataset, FeedbackDataset, SFTDataset
+from lion import Lion
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.modeling_outputs import CausalLMOutput
 
 from typing import Union, Optional
+
+# Have optimizers in a dictionary rather than in an if statement
+# This is so that if more optimizers are added in the future,
+# the code looks cleaner
+OPTIMIZER_DICT = {
+    "adamw": torch.optim.AdamW,
+    "lion": Lion
+}
 
 # Supervised Finetuning: Compute loss between model output and target using start_positions and end_positions
 def sft_forward(
@@ -320,6 +329,7 @@ def main() -> None:
     parser.add_argument("--gradient_accumulation_steps", type=int, default=16, help="Gradient accumulation steps")
     parser.add_argument("--resume_from", type=str, help="Resume training from a checkpoint")
     parser.add_argument("--save_pretrained", type=str, help="Save pretrained checkpoint after continuing a training run")
+    parser.add_argument("--optimizer", type=str, default="adamw", help="The optimizer to use during model training")
     args = parser.parse_args()
 
     project_dir = os.path.join(args.output_dir, "logs")
@@ -377,8 +387,11 @@ def main() -> None:
 
     model = AutoModelForCausalLM.from_pretrained(
         args.model, low_cpu_mem_usage=True, torch_dtype=torch.bfloat16)
+    
+    assert args.optimizer.lower() in OPTIMIZER_DICT.keys(), "Invalid optimizer type specified!"
+    optimizer_cls = OPTIMIZER_DICT[args.optimizer.lower()]
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
+    optimizer = optimizer_cls(model.parameters(), lr=args.learning_rate)
 
     model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
         model, optimizer, train_dataloader, eval_dataloader
