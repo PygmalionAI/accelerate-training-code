@@ -332,6 +332,8 @@ def main() -> None:
     parser.add_argument("--optimizer", type=str, default="adamw", help="The optimizer to use during model training")
     args = parser.parse_args()
 
+    assert args.optimizer.lower() in OPTIMIZER_DICT.keys(), "Invalid optimizer type specified!"
+    
     project_dir = os.path.join(args.output_dir, "logs")
     accelerator = accelerate.Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
@@ -388,7 +390,6 @@ def main() -> None:
     model = AutoModelForCausalLM.from_pretrained(
         args.model, low_cpu_mem_usage=True, torch_dtype=torch.bfloat16)
     
-    assert args.optimizer.lower() in OPTIMIZER_DICT.keys(), "Invalid optimizer type specified!"
     optimizer_cls = OPTIMIZER_DICT[args.optimizer.lower()]
 
     optimizer = optimizer_cls(model.parameters(), lr=args.learning_rate)
