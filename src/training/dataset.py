@@ -130,6 +130,7 @@ class SFTDataset(torch.utils.data.Dataset):
         self.df["input_ids"] = df.map(lambda x: x["input_ids"])
         self.df["start_positions"] = df.map(lambda x: x["start_positions"])
         self.df["end_positions"] = df.map(lambda x: x["end_positions"])
+        self.df["reward"] = df.map(lambda x: x["reward"])
 
         # iterate over sft, removing any that have too many tokens
         self.df = self.df.loc[self.df["input_ids"].map(lambda x: len(x[0])) <= self.max_length]
@@ -144,6 +145,7 @@ class SFTDataset(torch.utils.data.Dataset):
         sft_input_tokens = self.tokenizer(sft["input"].strip(), return_tensors="pt").input_ids
         sft_output_tokens = self.tokenizer(f' {sft["output"].strip()}<|endoftext|>', return_tensors="pt").input_ids
         input_ids = torch.cat([sft_input_tokens, sft_output_tokens], dim=-1)
+        reward = torch.tensor([sft["reward"]])
 
         start_positions = torch.tensor([len(sft_input_tokens[0])])
         end_positions = torch.tensor([len(sft_input_tokens[0]) + len(sft_output_tokens[0]) - 1])
@@ -151,6 +153,7 @@ class SFTDataset(torch.utils.data.Dataset):
             "input_ids": input_ids,
             "start_positions": start_positions,
             "end_positions": end_positions,
+            "reward": reward,
         }
 
     def __len__(self):
@@ -163,6 +166,7 @@ class SFTDataset(torch.utils.data.Dataset):
             "input_ids": item["input_ids"],
             "start_positions": item["start_positions"],
             "end_positions": item["end_positions"],
+            "reward": item["reward"]
         }
 
 
