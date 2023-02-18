@@ -42,7 +42,7 @@ class ContrastiveCrossEntropyLoss(CrossEntropyLoss):
 
         ce_loss = super().__call__(x, y, **kwargs)
         # multiply with classifier labels to not train with negative feedback (0)
-        ce_loss *= classifier_labels_ce
+        ce_loss *= classifier_labels_ce[0]
 
         # compute the contrastive loss part for the negative labels
         # first, get the positives as the top predictions != target
@@ -79,12 +79,12 @@ class ContrastiveCrossEntropyLoss(CrossEntropyLoss):
         # y_ct = (torch.ones(y.shape) * ).type(y.dtype).to(x_ct.device)
         # compute the contrastive loss as cross entropy loss between x_ct, y_ct
         ct_loss = super().__call__(x_ct, y_ct, **kwargs)
-        ct_loss *= classifier_labels_ct
+        ct_loss *= classifier_labels_ct[0]
 
         # remove loss from ignore index
         notnull = y.ne(self.ignore_index)
-        ce_loss *= notnull
-        ct_loss *= notnull
+        ce_loss *= notnull[0]
+        ct_loss *= notnull[0]
 
         loss = ce_loss + self.ct_loss_weight * ct_loss
 

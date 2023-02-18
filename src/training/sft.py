@@ -194,7 +194,7 @@ class SFT_Trainer:
                     attention_mask=attention_mask,
                     start_positions=start_positions,
                     end_positions=end_positions,
-                    reward=reward,
+                    rewards=rewards,
                     cringe_loss=self.args.use_cringe_loss
                 )
 
@@ -214,7 +214,7 @@ class SFT_Trainer:
                 print(f"attention_mask: {attention_mask}")
                 print(f"start_positions: {start_positions}")
                 print(f"end_positions: {end_positions}")
-                print(f"rewards: {reward}")
+                print(f"rewards: {rewards}")
                 print('Skipping batch...')
                 loss = torch.tensor(float('nan'), device=self.accelerator.device)
 
@@ -228,7 +228,7 @@ class SFT_Trainer:
         attention_mask = batch['attention_mask'].to("cuda")
         start_positions = batch['start_positions'].to("cuda")
         end_positions = batch['end_positions'].to("cuda")
-        reward = batch['rewards'].to("cuda")
+        rewards = batch['rewards'].to("cuda")
 
         with torch.no_grad():
             try:
@@ -238,8 +238,9 @@ class SFT_Trainer:
                     attention_mask=attention_mask,
                     start_positions=start_positions,
                     end_positions=end_positions,
-                    reward=reward,
-                    cringe_loss=self.args.use_cringe_loss
+                    rewards=rewards,
+                    # Cringe loss should not be used for eval
+                    cringe_loss=False
                 )
 
                 loss = outputs.loss
@@ -252,7 +253,7 @@ class SFT_Trainer:
                 print(f"attention_mask: {attention_mask}")
                 print(f"start_positions: {start_positions}")
                 print(f"end_positions: {end_positions}")
-                print(f"rewards: {reward}")
+                print(f"rewards: {rewards}")
                 print('Skipping batch...')
                 loss = torch.tensor(float('nan'), device=self.accelerator.device)
 
