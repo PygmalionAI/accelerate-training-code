@@ -7,8 +7,9 @@ import time
 import argparse
 import json
 
+from cringe import ContrastiveCrossEntropyLoss
 from dataset import TokenizedDataset, FeedbackDataset, SFTDataset
-from Lion import Lion
+from lion import Lion
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_scheduler
 from transformers.modeling_outputs import CausalLMOutput
@@ -31,6 +32,8 @@ def sft_forward(
     inputs_embeds: Optional[torch.FloatTensor] = None,
     start_positions: Optional[torch.LongTensor] = None,
     end_positions: Optional[torch.LongTensor] = None,
+    rewards: Optional[torch.FloatTensor] = None,
+    cringe_loss: bool = False,
     output_attentions: Optional[bool] = None,
     output_hidden_states: Optional[bool] = None,
     return_dict: Optional[bool] = None,
@@ -66,14 +69,32 @@ def sft_forward(
 
     # prompt_logits = logits[:, :start_positions[0]]
     # prompt_input_ids = input_ids[:, :start_positions[0]]
-
-    # compute loss for prompt and answer
-    loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-1)
-    shift_answer_logits = answer_logits[..., :-1, :].contiguous()
-    shift_answer_labels = answer_input_ids[..., 1:].contiguous()
     # shift_prompt_logits = prompt_logits[..., :-1, :].contiguous()
     # shift_prompt_labels = prompt_input_ids[..., 1:].contiguous()
-    answer_loss = loss_fct(shift_answer_logits.view(-1, answer_logits.size(-1)), shift_answer_labels.view(-1))
+
+    # compute loss for prompt and answer
+    shift_answer_logits = answer_logits[..., :-1, :].contiguous()
+    shift_answer_labels = answer_input_ids[..., 1:].contiguous()
+    flattened_answer_logits = shift_answer_logits.view(-1, answer_logits.size(-1))
+    flattened_answer_labels = shift_answer_labels.view(-1)
+
+    if cringe_loss:
+        # TODO(TG): This assumes we don't want to bother with loss_fct.train_ct_on_positive_examples.
+        # And that the batch size is 1. Generalize it more later.
+        reward = rewards.unsqueeze().item()
+        # Build classifier labels as accepted by CRINGE loss
+        # Negative label is 0, positive label is 1
+        if reward >= 1.:
+            classifier_labels = torch.ones_like(flattened_answer_labels).to(flattened_answer_labels.device)
+        else:
+            classifier_labels = torch.zeros_like(flattened_answer_labels).to(flattened_answer_labels.device)
+        
+        loss_fct = ContrastiveCrossEntropyLoss(ignore_index=-1)
+        answer_loss, _, _ = loss_fct(flattened_answer_logits, flattened_answer_labels, classifier_labels=classifier_labels)
+    else:
+        loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-1)
+        answer_loss = loss_fct(flattened_answer_logits, flattened_answer_labels)
+
     # prompt_loss = loss_fct(shift_prompt_logits.view(-1, prompt_logits.size(-1)), shift_prompt_labels.view(-1))
 
     # loss = (prompt_loss + answer_loss) / 2
@@ -164,6 +185,7 @@ class SFT_Trainer:
             attention_mask = batch['attention_mask'].to("cuda")
             start_positions = batch['start_positions'].to("cuda")
             end_positions = batch['end_positions'].to("cuda")
+            reward = batch['rewards'].to("cuda")
 
             try:
                 outputs = sft_forward(
@@ -172,6 +194,8 @@ class SFT_Trainer:
                     attention_mask=attention_mask,
                     start_positions=start_positions,
                     end_positions=end_positions,
+                    reward=reward,
+                    cringe_loss=self.args.use_cringe_loss
                 )
 
                 loss = outputs.loss
@@ -190,6 +214,7 @@ class SFT_Trainer:
                 print(f"attention_mask: {attention_mask}")
                 print(f"start_positions: {start_positions}")
                 print(f"end_positions: {end_positions}")
+                print(f"rewards: {reward}")
                 print('Skipping batch...')
                 loss = torch.tensor(float('nan'), device=self.accelerator.device)
 
@@ -203,6 +228,7 @@ class SFT_Trainer:
         attention_mask = batch['attention_mask'].to("cuda")
         start_positions = batch['start_positions'].to("cuda")
         end_positions = batch['end_positions'].to("cuda")
+        reward = batch['rewards'].to("cuda")
 
         with torch.no_grad():
             try:
@@ -212,6 +238,8 @@ class SFT_Trainer:
                     attention_mask=attention_mask,
                     start_positions=start_positions,
                     end_positions=end_positions,
+                    reward=reward,
+                    cringe_loss=self.args.use_cringe_loss
                 )
 
                 loss = outputs.loss
@@ -224,6 +252,7 @@ class SFT_Trainer:
                 print(f"attention_mask: {attention_mask}")
                 print(f"start_positions: {start_positions}")
                 print(f"end_positions: {end_positions}")
+                print(f"rewards: {reward}")
                 print('Skipping batch...')
                 loss = torch.tensor(float('nan'), device=self.accelerator.device)
 
@@ -337,6 +366,7 @@ def main() -> None:
     parser.add_argument("--resume_from", type=str, help="Resume training from a checkpoint")
     parser.add_argument("--save_pretrained", type=str, help="Save pretrained checkpoint after continuing a training run")
     parser.add_argument("--optimizer", type=str, default="adamw", help="The optimizer to use during model training")
+    parser.add_argument("--use_cringe_loss", action="store_true", help="Use contrastive cross-entropy loss as implemented by ParlAI")
     args = parser.parse_args()
 
     assert args.optimizer in OPTIMIZER_DICT.keys(), f"Invalid optimizer, valid options are: {', '.join(OPTIMIZER_DICT.keys())}"
@@ -365,18 +395,23 @@ def main() -> None:
         end_positions = torch.stack(
             [batch["end_positions"] for batch in batches]
         )
+        # Rewards are initially a float, not a tensor
+        rewards = torch.stack(
+            [torch.FloatTensor(batch["reward"]) for batch in batches]
+        )
         return {
             "input_ids": padded_tokens["input_ids"],
             "attention_mask": padded_tokens["attention_mask"],
             "start_positions": start_positions,
             "end_positions": end_positions,
+            "rewards": rewards,
         }
 
     model = AutoModelForCausalLM.from_pretrained(
         args.model, low_cpu_mem_usage=True, torch_dtype=torch.bfloat16)
 
     train_dataset = SFTDataset(
-        args.train_dataset, tokenizer, is_main_process=accelerator.is_main_process)
+        args.train_dataset, tokenizer, is_main_process=accelerator.is_main_process, keep_negative_examples=args.use_cringe_loss)
 
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
@@ -388,7 +423,7 @@ def main() -> None:
     eval_dataloader = None
     if args.eval_dataset is not None:
         eval_dataset = SFTDataset(
-            args.eval_dataset, tokenizer, is_main_process=accelerator.is_main_process)
+            args.eval_dataset, tokenizer, is_main_process=accelerator.is_main_process, keep_negative_examples=args.use_cringe_loss)
 
         eval_dataloader = torch.utils.data.DataLoader(
             eval_dataset,
