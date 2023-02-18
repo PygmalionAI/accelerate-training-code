@@ -7,12 +7,19 @@ import time
 import argparse
 import json
 
+from cringe import ContrastiveCrossEntropyLoss
 from dataset import TokenizedDataset, FeedbackDataset, SFTDataset
+from lion import Lion
 
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, get_scheduler
 from transformers.modeling_outputs import CausalLMOutput
 
 from typing import Union, Optional
+
+OPTIMIZER_DICT = {
+    "adamw": torch.optim.AdamW,
+    "lion": Lion,
+}
 
 # Supervised Finetuning: Compute loss between model output and target using start_positions and end_positions
 def sft_forward(
@@ -25,6 +32,8 @@ def sft_forward(
     inputs_embeds: Optional[torch.FloatTensor] = None,
     start_positions: Optional[torch.LongTensor] = None,
     end_positions: Optional[torch.LongTensor] = None,
+    rewards: Optional[torch.FloatTensor] = None,
+    cringe_loss: bool = False,
     output_attentions: Optional[bool] = None,
     output_hidden_states: Optional[bool] = None,
     return_dict: Optional[bool] = None,
@@ -60,14 +69,32 @@ def sft_forward(
 
     # prompt_logits = logits[:, :start_positions[0]]
     # prompt_input_ids = input_ids[:, :start_positions[0]]
-
-    # compute loss for prompt and answer
-    loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-1)
-    shift_answer_logits = answer_logits[..., :-1, :].contiguous()
-    shift_answer_labels = answer_input_ids[..., 1:].contiguous()
     # shift_prompt_logits = prompt_logits[..., :-1, :].contiguous()
     # shift_prompt_labels = prompt_input_ids[..., 1:].contiguous()
-    answer_loss = loss_fct(shift_answer_logits.view(-1, answer_logits.size(-1)), shift_answer_labels.view(-1))
+
+    # compute loss for prompt and answer
+    shift_answer_logits = answer_logits[..., :-1, :].contiguous()
+    shift_answer_labels = answer_input_ids[..., 1:].contiguous()
+    flattened_answer_logits = shift_answer_logits.view(-1, answer_logits.size(-1))
+    flattened_answer_labels = shift_answer_labels.view(-1)
+
+    if cringe_loss:
+        # TODO(TG): This assumes we don't want to bother with loss_fct.train_ct_on_positive_examples.
+        # And that the batch size is 1. Generalize it more later.
+        reward = rewards.unsqueeze().item()
+        # Build classifier labels as accepted by CRINGE loss
+        # Negative label is 0, positive label is 1
+        if reward >= 1.:
+            classifier_labels = torch.ones_like(flattened_answer_labels).to(flattened_answer_labels.device)
+        else:
+            classifier_labels = torch.zeros_like(flattened_answer_labels).to(flattened_answer_labels.device)
+        
+        loss_fct = ContrastiveCrossEntropyLoss(ignore_index=-1)
+        answer_loss, _, _ = loss_fct(flattened_answer_logits, flattened_answer_labels, classifier_labels=classifier_labels)
+    else:
+        loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-1)
+        answer_loss = loss_fct(flattened_answer_logits, flattened_answer_labels)
+
     # prompt_loss = loss_fct(shift_prompt_logits.view(-1, prompt_logits.size(-1)), shift_prompt_labels.view(-1))
 
     # loss = (prompt_loss + answer_loss) / 2
@@ -93,6 +120,7 @@ class SFT_Trainer:
         train_dataloader: torch.utils.data.DataLoader,
         eval_dataloader: torch.utils.data.DataLoader,
         optimizer: torch.optim.Optimizer,
+        lr_scheduler,
         weight_dtype: torch.dtype,
         args: argparse.Namespace,
     ) -> None:
@@ -102,6 +130,7 @@ class SFT_Trainer:
         self.train_dataloader = train_dataloader
         self.eval_dataloader = eval_dataloader
         self.optimizer = optimizer
+        self.lr_scheduler = lr_scheduler
         self.weight_dtype = weight_dtype
         self.args = args
         self.starting_step = 0
@@ -156,6 +185,7 @@ class SFT_Trainer:
             attention_mask = batch['attention_mask'].to("cuda")
             start_positions = batch['start_positions'].to("cuda")
             end_positions = batch['end_positions'].to("cuda")
+            reward = batch['rewards'].to("cuda")
 
             try:
                 outputs = sft_forward(
@@ -164,6 +194,8 @@ class SFT_Trainer:
                     attention_mask=attention_mask,
                     start_positions=start_positions,
                     end_positions=end_positions,
+                    reward=reward,
+                    cringe_loss=self.args.use_cringe_loss
                 )
 
                 loss = outputs.loss
@@ -171,6 +203,7 @@ class SFT_Trainer:
                 if self.accelerator.sync_gradients:
                     self.accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
                 self.optimizer.step()
+                self.lr_scheduler.step()
                 self.optimizer.zero_grad()
             except RuntimeError as e:
                 if "CUDA out of memory" not in str(e):
@@ -181,11 +214,13 @@ class SFT_Trainer:
                 print(f"attention_mask: {attention_mask}")
                 print(f"start_positions: {start_positions}")
                 print(f"end_positions: {end_positions}")
+                print(f"rewards: {reward}")
                 print('Skipping batch...')
                 loss = torch.tensor(float('nan'), device=self.accelerator.device)
 
         return {
             "train/loss": loss.detach().item(),
+            "train/lr": self.lr_scheduler.get_last_lr()[0],
         }
 
     def eval_step(self, batch: dict) -> None:
@@ -193,6 +228,7 @@ class SFT_Trainer:
         attention_mask = batch['attention_mask'].to("cuda")
         start_positions = batch['start_positions'].to("cuda")
         end_positions = batch['end_positions'].to("cuda")
+        reward = batch['rewards'].to("cuda")
 
         with torch.no_grad():
             try:
@@ -202,6 +238,8 @@ class SFT_Trainer:
                     attention_mask=attention_mask,
                     start_positions=start_positions,
                     end_positions=end_positions,
+                    reward=reward,
+                    cringe_loss=self.args.use_cringe_loss
                 )
 
                 loss = outputs.loss
@@ -214,6 +252,7 @@ class SFT_Trainer:
                 print(f"attention_mask: {attention_mask}")
                 print(f"start_positions: {start_positions}")
                 print(f"end_positions: {end_positions}")
+                print(f"rewards: {reward}")
                 print('Skipping batch...')
                 loss = torch.tensor(float('nan'), device=self.accelerator.device)
 
@@ -254,19 +293,22 @@ class SFT_Trainer:
         self.model.train()
 
     def train(self) -> None:
-        # Delete some keys from the CLI args because they're prone to info leakage.
-        hps = copy.deepcopy(vars(self.args))
-        del hps['model']
-        del hps['train_dataset']
-        del hps['eval_dataset']
+        hps = {
+            "base_model": os.path.basename(self.args.model),
+            "learning_rate": self.args.learning_rate,
+            "learning_rate_scheduler": self.args.learning_rate_scheduler,
+            "warmup_steps": self.args.warmup_steps,
+            "gradient_accumulation_steps": self.args.gradient_accumulation_steps,
+        }
 
-        self.accelerator.init_trackers(self.args.run_name, config=hps)
+        self.accelerator.init_trackers(self.args.project_name, config=hps)
         self.model.train()
         for epoch in range(self.args.epochs):
             for idx, batch in enumerate(self.train_dataloader):
                 # Skip over data if resuming a training run.
                 if idx < self.starting_step:
                     self.local_step += 1
+                    self.lr_scheduler.step()
                     if self.accelerator.is_main_process:
                         self.progress_bar.update(1)
                     continue
@@ -314,13 +356,20 @@ def main() -> None:
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
     parser.add_argument("--save_steps", type=int, default=1000, help="Save model every x steps")
     parser.add_argument("--learning_rate", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument("--learning_rate_scheduler", type=str, default="constant", help="Learning rate scheduler")
+    parser.add_argument("--warmup_steps", type=int, default=128, help="Number of warmup steps")
     parser.add_argument("--save_slim_weights", action="store_true", help="Save only slim weights when saving checkpoints")
     parser.add_argument("--log_with", type=str, default="all", help="Which experiment tracker to use")
     parser.add_argument("--run_name", type=str, required=True, help="Name of this run, will be used as a folder name")
+    parser.add_argument("--project_name", type=str, required=True, help="Project name for wandb/accelerate's tracker.")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=16, help="Gradient accumulation steps")
     parser.add_argument("--resume_from", type=str, help="Resume training from a checkpoint")
     parser.add_argument("--save_pretrained", type=str, help="Save pretrained checkpoint after continuing a training run")
+    parser.add_argument("--optimizer", type=str, default="adamw", help="The optimizer to use during model training")
+    parser.add_argument("--use_cringe_loss", action="store_true", help="Use contrastive cross-entropy loss as implemented by ParlAI")
     args = parser.parse_args()
+
+    assert args.optimizer in OPTIMIZER_DICT.keys(), f"Invalid optimizer, valid options are: {', '.join(OPTIMIZER_DICT.keys())}"
 
     project_dir = os.path.join(args.output_dir, "logs")
     accelerator = accelerate.Accelerator(
@@ -346,15 +395,23 @@ def main() -> None:
         end_positions = torch.stack(
             [batch["end_positions"] for batch in batches]
         )
+        # Rewards are initially a float, not a tensor
+        rewards = torch.stack(
+            [torch.FloatTensor(batch["reward"]) for batch in batches]
+        )
         return {
             "input_ids": padded_tokens["input_ids"],
             "attention_mask": padded_tokens["attention_mask"],
             "start_positions": start_positions,
             "end_positions": end_positions,
+            "rewards": rewards,
         }
 
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model, low_cpu_mem_usage=True, torch_dtype=torch.bfloat16)
+
     train_dataset = SFTDataset(
-        args.train_dataset, tokenizer, is_main_process=accelerator.is_main_process)
+        args.train_dataset, tokenizer, is_main_process=accelerator.is_main_process, keep_negative_examples=args.use_cringe_loss)
 
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
@@ -366,7 +423,7 @@ def main() -> None:
     eval_dataloader = None
     if args.eval_dataset is not None:
         eval_dataset = SFTDataset(
-            args.eval_dataset, tokenizer, is_main_process=accelerator.is_main_process)
+            args.eval_dataset, tokenizer, is_main_process=accelerator.is_main_process, keep_negative_examples=args.use_cringe_loss)
 
         eval_dataloader = torch.utils.data.DataLoader(
             eval_dataset,
@@ -375,13 +432,20 @@ def main() -> None:
             collate_fn=collate_fn,
         )
 
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model, low_cpu_mem_usage=True, torch_dtype=torch.bfloat16)
+    optim_cls = OPTIMIZER_DICT[args.optimizer]
+    optimizer = optim_cls(model.parameters(), lr=args.learning_rate)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
+    lr_scheduler = get_scheduler(
+        name=args.learning_rate_scheduler,
+        optimizer=optimizer,
+        num_warmup_steps=args.warmup_steps,
+        num_training_steps=args.epochs * len(train_dataloader),
+    )
 
-    model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
-        model, optimizer, train_dataloader, eval_dataloader
+    model = torch.compile(model, mode="max-autotune")
+
+    model, optimizer, lr_scheduler, train_dataloader, eval_dataloader = accelerator.prepare(
+        model, optimizer, lr_scheduler, train_dataloader, eval_dataloader
     )
 
     if args.save_pretrained:
@@ -404,6 +468,7 @@ def main() -> None:
         train_dataloader=train_dataloader,
         eval_dataloader=eval_dataloader,
         optimizer=optimizer,
+        lr_scheduler=lr_scheduler,
         weight_dtype=None,
         args=args,
     )

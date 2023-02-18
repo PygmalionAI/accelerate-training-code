@@ -96,7 +96,7 @@ class FeedbackDataset(torch.utils.data.Dataset):
 # }
 import tqdm
 class SFTDataset(torch.utils.data.Dataset):
-    def __init__(self, sft_file: str, tokenizer: transformers.AutoTokenizer, is_main_process: bool, max_length: int = 2048):
+    def __init__(self, sft_file: str, tokenizer: transformers.AutoTokenizer, is_main_process: bool, max_length: int = 2048, keep_negative_examples: bool = False):
         tokenized_data_cache = f"{sft_file}.tokenized.bin"
         if os.path.isfile(tokenized_data_cache):
             with open(tokenized_data_cache, "rb") as file:
@@ -113,6 +113,10 @@ class SFTDataset(torch.utils.data.Dataset):
             logger.info("Loading SFT dataset entirely into memory...")
 
         df = pd.read_json(sft_file, lines=True)
+
+        # Remove negative examples from the dataset if they're not wanted
+        if not keep_negative_examples:
+            pd = pd[pd["reward"] >= 1.]
 
         if is_main_process:
             logger.info("Tokenizing SFT dataset...")
@@ -145,7 +149,7 @@ class SFTDataset(torch.utils.data.Dataset):
         sft_input_tokens = self.tokenizer(sft["input"].strip(), return_tensors="pt").input_ids
         sft_output_tokens = self.tokenizer(f' {sft["output"].strip()}<|endoftext|>', return_tensors="pt").input_ids
         input_ids = torch.cat([sft_input_tokens, sft_output_tokens], dim=-1)
-        reward = torch.tensor([sft["reward"]])
+        reward = sft["reward"]
 
         start_positions = torch.tensor([len(sft_input_tokens[0])])
         end_positions = torch.tensor([len(sft_input_tokens[0]) + len(sft_output_tokens[0]) - 1])
@@ -162,13 +166,6 @@ class SFTDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         item = self.df.iloc[idx]
         return item
-        return {
-            "input_ids": item["input_ids"],
-            "start_positions": item["start_positions"],
-            "end_positions": item["end_positions"],
-            "reward": item["reward"]
-        }
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Dataset Creator')
