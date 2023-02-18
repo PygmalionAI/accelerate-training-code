@@ -398,7 +398,7 @@ def main() -> None:
         )
         # Rewards are initially a float, not a tensor
         rewards = torch.stack(
-            [torch.FloatTensor(batch["reward"]) for batch in batches]
+            [torch.tensor(batch["reward"]) for batch in batches]
         )
         return {
             "input_ids": padded_tokens["input_ids"],
