@@ -116,7 +116,7 @@ class SFTDataset(torch.utils.data.Dataset):
 
         # Remove negative examples from the dataset if they're not wanted
         if not keep_negative_examples:
-            pd = pd[pd["reward"] >= 1.]
+            df = df[df["reward"] >= 1.]
 
         if is_main_process:
             logger.info("Tokenizing SFT dataset...")
