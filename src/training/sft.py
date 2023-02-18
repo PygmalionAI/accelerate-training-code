@@ -81,7 +81,7 @@ def sft_forward(
     if cringe_loss:
         # TODO(TG): This assumes we don't want to bother with loss_fct.train_ct_on_positive_examples.
         # And that the batch size is 1. Generalize it more later.
-        reward = rewards.unsqueeze().item()
+        reward = rewards.squeeze().item()
         # Build classifier labels as accepted by CRINGE loss
         # Negative label is 0, positive label is 1
         if reward >= 1.:
@@ -185,7 +185,7 @@ class SFT_Trainer:
             attention_mask = batch['attention_mask'].to("cuda")
             start_positions = batch['start_positions'].to("cuda")
             end_positions = batch['end_positions'].to("cuda")
-            reward = batch['rewards'].to("cuda")
+            rewards = batch['rewards'].to("cuda")
 
             try:
                 outputs = sft_forward(
