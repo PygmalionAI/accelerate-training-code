@@ -239,8 +239,7 @@ class SFT_Trainer:
                     start_positions=start_positions,
                     end_positions=end_positions,
                     rewards=rewards,
-                    # Cringe loss should not be used for eval
-                    cringe_loss=False
+                    cringe_loss=self.args.use_cringe_loss
                 )
 
                 loss = outputs.loss
