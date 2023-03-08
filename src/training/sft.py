@@ -7,13 +7,16 @@ import time
 import argparse
 import json
 
-from dataset import TokenizedDataset, FeedbackDataset, SFTDataset
-from Lion import Lion
+from typing import Union, Optional
 
+from peft import LoraConfig, TaskType, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_scheduler
 from transformers.modeling_outputs import CausalLMOutput
 
-from typing import Union, Optional
+from dataset import TokenizedDataset, FeedbackDataset, SFTDataset
+from lion import Lion
+
+
 
 OPTIMIZER_DICT = {
     "adamw": torch.optim.AdamW,
@@ -372,6 +375,7 @@ def main() -> None:
     parser.add_argument("--resume_from", type=str, help="Resume training from a checkpoint")
     parser.add_argument("--save_pretrained", type=str, help="Save pretrained checkpoint after continuing a training run")
     parser.add_argument("--optimizer", type=str, default="adamw", help="The optimizer to use during model training")
+    parser.add_argument("--apply_lora", action="store_true", help="Fine-tune the model with LoRA, rather than adjusting the full network")
     args = parser.parse_args()
 
     assert args.optimizer in OPTIMIZER_DICT.keys(), f"Invalid optimizer, valid options are: {', '.join(OPTIMIZER_DICT.keys())}"
@@ -409,6 +413,21 @@ def main() -> None:
 
     model = AutoModelForCausalLM.from_pretrained(
         args.model, low_cpu_mem_usage=True, torch_dtype=torch.bfloat16)
+    
+    if args.apply_lora:
+        # These settings will need to be tuned.
+        # Maybe add these as a bunch of separate args later?
+        lora_config = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            inference_mode=False,
+            r=16,
+            lora_alpha=32,
+            lora_dropout=0.05,
+            merge_weights=False,
+        )
+        model = get_peft_model(model, lora_config)
+        if accelerator.is_main_process:
+            model.print_trainable_parameters()
 
     train_dataset = SFTDataset(
         args.train_dataset, tokenizer, is_main_process=accelerator.is_main_process)
