@@ -158,7 +158,39 @@ class SFT_Trainer:
         else:
             self.accelerator.save_state(path)
 
-    def step(self, batch: dict) -> None:
+    def warmup_step(self) -> None:
+        '''Preallocates memory for maximum sequence length in order to avoid nasty OOM shocks'''
+        model_config = self.model.gpt_neox.config
+        input_ids = torch.randint(
+            low=1,
+            high=model_config.vocab_size + 1,
+            # max_position_embeddings = 2048
+            size=(self.args.batch_size, model_config.max_position_embeddings)
+        ).to("cuda")
+        attention_mask = torch.zeros((self.args.batch_size, model_config.max_position_embeddings)).to("cuda")
+        # Start positions can be 0 and end positions can be 1, it doesn't really matter.
+        start_positions = torch.zeros((self.args.batch_size, 1)).to("cuda")
+        end_positions = torch.ones((self.args.batch_size, 1)).to("cuda")
+        rewards = torch.ones((self.args.batch_size, 1)).to("cuda")
+
+        outputs = sft_forward(
+            self.model,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            start_positions=start_positions,
+            end_positions=end_positions,
+            rewards=rewards,
+            cringe_loss=self.args.use_cringe_loss
+        )
+
+        loss = outputs.loss
+        self.accelerator.backward(loss)
+        if self.accelerator.sync_gradients:
+            self.accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
+        # Do not execute a step on the optimizer or LR scheduler, but zero out gradients
+        self.optimizer.zero_grad()
+
+    def step(self, batch: dict) -> dict:
         with self.accelerator.accumulate(self.model):
             input_ids = batch['input_ids'].to("cuda")
             attention_mask = batch['attention_mask'].to("cuda")
@@ -198,7 +230,7 @@ class SFT_Trainer:
             "train/lr": self.lr_scheduler.get_last_lr()[0],
         }
 
-    def eval_step(self, batch: dict) -> None:
+    def eval_step(self, batch: dict) -> torch.tensor:
         input_ids = batch['input_ids'].to("cuda")
         attention_mask = batch['attention_mask'].to("cuda")
         start_positions = batch['start_positions'].to("cuda")
@@ -274,6 +306,9 @@ class SFT_Trainer:
 
         self.accelerator.init_trackers(self.args.project_name, config=hps)
         self.model.train()
+        # Apply warmup step to preallocate memory
+        self.warmup_step()
+
         for epoch in range(self.args.epochs):
             for idx, batch in enumerate(self.train_dataloader):
                 # Skip over data if resuming a training run.
