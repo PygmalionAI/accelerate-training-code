@@ -163,18 +163,18 @@ class SFT_Trainer:
 
     def warmup_step(self) -> None:
         '''Preallocates memory for maximum sequence length in order to avoid nasty OOM shocks'''
-        model_config = self.model.gpt_neox.config
+        model_config = self.model.module.gpt_neox.config
         input_ids = torch.randint(
             low=1,
             high=model_config.vocab_size + 1,
-            # max_position_embeddings = 2048
+            # max_position_embeddings is the maxmimum context window of the model
+            # Usually, this is 2048
             size=(self.args.batch_size, model_config.max_position_embeddings)
         ).to("cuda")
         attention_mask = torch.zeros((self.args.batch_size, model_config.max_position_embeddings)).to("cuda")
         # Start positions can be 0 and end positions can be 1, it doesn't really matter.
         start_positions = torch.zeros((self.args.batch_size, 1)).to("cuda")
         end_positions = torch.ones((self.args.batch_size, 1)).to("cuda")
-        rewards = torch.ones((self.args.batch_size, 1)).to("cuda")
 
         outputs = sft_forward(
             self.model,
@@ -182,8 +182,6 @@ class SFT_Trainer:
             attention_mask=attention_mask,
             start_positions=start_positions,
             end_positions=end_positions,
-            rewards=rewards,
-            cringe_loss=self.args.use_cringe_loss
         )
 
         loss = outputs.loss
@@ -376,6 +374,7 @@ def main() -> None:
     parser.add_argument("--save_pretrained", type=str, help="Save pretrained checkpoint after continuing a training run")
     parser.add_argument("--optimizer", type=str, default="adamw", help="The optimizer to use during model training")
     parser.add_argument("--apply_lora", action="store_true", help="Fine-tune the model with LoRA, rather than adjusting the full network")
+    parser.add_argument("--lora_r", type=int, default=16, help="Dimension of LoRA matrices")
     args = parser.parse_args()
 
     assert args.optimizer in OPTIMIZER_DICT.keys(), f"Invalid optimizer, valid options are: {', '.join(OPTIMIZER_DICT.keys())}"
@@ -420,7 +419,7 @@ def main() -> None:
         lora_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
             inference_mode=False,
-            r=16,
+            r=args.lora_r,
             lora_alpha=32,
             lora_dropout=0.05,
             merge_weights=False,
