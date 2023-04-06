@@ -2,6 +2,7 @@ import pathlib
 import typing as t
 from dataclasses import dataclass, field
 
+import torch
 import transformers
 from dataset import DataCollatorForMmapedDataset, MmappedArrowDataset
 
@@ -52,10 +53,17 @@ def main() -> None:
         time.sleep(other_args.model_load_delay_per_rank *
                    training_args.local_rank)
 
+    model_load_dtype = None
+    if training_args.bf16:
+        model_load_dtype = torch.bfloat16
+    elif training_args.fp16:
+        model_load_dtype = torch.float16
+
     model = transformers.AutoModelForCausalLM.from_pretrained(
         model_args.model_name_or_path,
         low_cpu_mem_usage=True,
-    )
+        torch_dtype=model_load_dtype,
+    ).cuda()
 
     train_dataset = MmappedArrowDataset(data_args.train_file)
     eval_dataset = MmappedArrowDataset(data_args.eval_file)
