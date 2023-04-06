@@ -22,8 +22,8 @@ class DataArguments:
 class OtherArguments:
     model_load_delay_per_rank: t.Optional[int] = field(metadata={
         "help":
-        "Delay loading the model by (this many seconds) * (local_rank)."
-    })
+        "Delay loading the model by (this many seconds) * (local_rank).",
+    }, default=None)
 
 
 def main() -> None:
