@@ -1,4 +1,3 @@
-transformers>=4.25.1
-accelerate>=0.15.0
-pandarallel>=1.6.4
-peft
+parallel_pandas
+pyarrow
+transformers
