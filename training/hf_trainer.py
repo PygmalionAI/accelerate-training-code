@@ -24,18 +24,32 @@ class OtherArguments:
     model_load_delay_per_rank: t.Optional[int] = field(metadata={
         "help":
         "Delay loading the model by (this many seconds) * (local_rank).",
-    }, default=None)
+    },
+                                                       default=None)
+
+
+@dataclass
+class LoraArguments:
+    use_lora: t.Optional[bool] = field(metadata={"help": "LoRA rank."},
+                                       default=False)
+    lora_rank: t.Optional[int] = field(metadata={"help": "LoRA rank."},
+                                       default=4)
+    lora_alpha: t.Optional[int] = field(metadata={"help": "LoRA alpha."},
+                                        default=32)
+    lora_dropout: t.Optional[float] = field(metadata={"help": "LoRA dropout."},
+                                            default=0.05)
 
 
 def main() -> None:
     parser = transformers.HfArgumentParser((
         ModelArguments,
         DataArguments,
+        LoraArguments,
         OtherArguments,
         transformers.TrainingArguments,
     ))
-    model_args, data_args, other_args, training_args = parser.parse_args_into_dataclasses(
-    )
+    model_args, data_args, lora_args, \
+        other_args, training_args = parser.parse_args_into_dataclasses()
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
@@ -53,6 +67,7 @@ def main() -> None:
         time.sleep(other_args.model_load_delay_per_rank *
                    training_args.local_rank)
 
+    # Model loading.
     model_load_dtype = None
     if training_args.bf16:
         model_load_dtype = torch.bfloat16
@@ -65,6 +80,20 @@ def main() -> None:
         torch_dtype=model_load_dtype,
     ).cuda()
 
+    # LoRA setup.
+    if lora_args.use_lora:
+        from peft import LoraConfig, TaskType, get_peft_model
+        peft_config = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            inference_mode=False,
+            r=lora_args.lora_rank,
+            lora_alpha=lora_args.lora_alpha,
+            lora_dropout=lora_args.lora_dropout,
+        )
+        model = get_peft_model(model, peft_config)
+        model.print_trainable_parameters()
+
+    # Dataset setup.
     train_dataset = MmappedArrowDataset(data_args.train_file)
     eval_dataset = MmappedArrowDataset(data_args.eval_file)
     data_collator = DataCollatorForMmapedDataset(tokenizer=tokenizer)
