@@ -1,3 +1,5 @@
+accelerate
 parallel_pandas
+peft
 pyarrow
 transformers
