@@ -79,8 +79,8 @@ def main() -> None:
         # TODO(11b): Test whether this does what I expect. Idea is to have the
         # trainer save the current state when I interrupt the run so I don't
         # need to keep waiting for a checkpoint step.
-        trainer.save_model()
-        trainer.save_state()
+        # trainer.save_model()
+        # trainer.save_state()
         raise ex
 
     trainer.save_state()
