@@ -18,16 +18,39 @@ class DataArguments:
     eval_file: str = field(metadata={"help": "Path to the evaluation set."})
 
 
+@dataclass
+class OtherArguments:
+    model_load_delay_per_rank: t.Optional[int] = field(metadata={
+        "help":
+        "Delay loading the model by (this many seconds) * (local_rank)."
+    })
+
+
 def main() -> None:
-    parser = transformers.HfArgumentParser(
-        (ModelArguments, DataArguments, transformers.TrainingArguments))
-    model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    parser = transformers.HfArgumentParser((
+        ModelArguments,
+        DataArguments,
+        OtherArguments,
+        transformers.TrainingArguments,
+    ))
+    model_args, data_args, other_args, training_args = parser.parse_args_into_dataclasses(
+    )
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
         padding_side="right",
         use_fast=True,
     )
+
+    if other_args.model_load_delay_per_rank is not None:
+        # When working with constrained system memory, loading the model at the
+        # exact same time on all training processes will likely fail due to all
+        # the model copies going around. We can delay loading based on
+        # local_rank so not all processes are doing this at once, which
+        # alleviates the situation. Kinda silly, but it works.
+        import time
+        time.sleep(other_args.model_load_delay_per_rank *
+                   training_args.local_rank)
 
     model = transformers.AutoModelForCausalLM.from_pretrained(
         model_args.model_name_or_path,
