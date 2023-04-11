@@ -126,6 +126,7 @@ def gptneox_forward(
     seq_len = key.shape[-2]
     if has_layer_past:
         seq_len += layer_past[0].shape[-2]
+        
     cos, sin = self.rotary_emb(value, seq_len=seq_len)
     query, key = gptneox_apply_rotary_pos_emb(query_rot, key_rot, cos, sin, position_ids)
     query = torch.cat((query, query_pass), dim=-1)
@@ -138,12 +139,17 @@ def gptneox_forward(
         key = torch.cat((past_key, key), dim=-2)
         value = torch.cat((past_value, value), dim=-2)
     present = (key, value) if use_cache else None
-
+    
+    # Permute tensors so that it fits into xformers MHA
+    query = query.permute(0, 2, 1, 3).contiguous()
+    key = key.permute(0, 2, 1, 3).contiguous()
+    value = value.permute(0, 2, 1, 3).contiguous()
+    
     # Compute attention
     attn_output = memory_efficient_attention(query, key, value, attn_bias=attention_mask)
 
     # Reshape outputs
-    attn_output = self._merge_heads(attn_output, self.num_attention_heads, self.head_size)
+    attn_output = attn_output.view(attn_output.size(0), attn_output.size(1), self.num_attention_heads * self.head_size)
     attn_output = self.dense(attn_output)
 
     outputs = (attn_output, present)
