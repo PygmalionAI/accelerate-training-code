@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import torch
 import transformers
 from dataset import DataCollatorForMmapedDataset, MmappedArrowDataset
+from profiling import ProfilerCallback, build_profiler_configuration
 
 
 @dataclass
@@ -26,6 +27,9 @@ class OtherArguments:
         "Delay loading the model by (this many seconds) * (local_rank).",
     },
                                                        default=None)
+    enable_profiler: bool = field(
+        metadata={"help": "Whether to profile the training loop."},
+        default=False)
 
 
 @dataclass
@@ -108,10 +112,20 @@ def main() -> None:
     )
 
     try:
-        if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
-            trainer.train(resume_from_checkpoint=True)
+        # Resume from checkpoint if we have any checkpoints automatically saved
+        # by the HF Trainer within the output directory.
+        resume_from_checkpoint = len(
+            list(pathlib.Path(
+                training_args.output_dir).glob("checkpoint-*"))) > 0
+
+        if other_args.enable_profiler:
+            profiler_args = build_profiler_configuration()
+            with torch.profiler.profile(**profiler_args) as profiler:
+                trainer.add_callback(ProfilerCallback(profiler=profiler))
+                trainer.train(resume_from_checkpoint=resume_from_checkpoint)
         else:
-            trainer.train()
+            trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+
     except KeyboardInterrupt as ex:
         # TODO(11b): Test whether this does what I expect. Idea is to have the
         # trainer save the current state when I interrupt the run so I don't
