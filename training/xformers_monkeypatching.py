@@ -61,6 +61,10 @@ def gptj_forward(
     key = key.permute(0, 2, 1, 3)
     query = query.permute(0, 2, 1, 3)
 
+    # Upcast value to fp32 so that xformers doesn't error out
+    if value.dtype != torch.float32:
+        value = value.to(torch.float32)
+
     if layer_past is not None:
         past_key = layer_past[0]
         past_value = layer_past[1]
@@ -183,6 +187,10 @@ def llama_forward(
     cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
     query_states, key_states = gptneox_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
     # [bsz, nh, t, hd]
+
+    # Upcast value to fp32 so that xformers doesn't error out
+    if value.dtype != torch.float32:
+        value = value.to(torch.float32)
 
     if past_key_value is not None:
         # reuse k, v, self_attention
