@@ -132,6 +132,10 @@ def gptneox_forward(
     query = torch.cat((query, query_pass), dim=-1)
     key = torch.cat((key, key_pass), dim=-1)
 
+    # Upcast value to fp32 so that xformers doesn't error out
+    if value.dtype != torch.float32:
+        value = value.to(torch.float32)
+
     # Cache QKV values
     if has_layer_past:
         past_key = layer_past[0]
