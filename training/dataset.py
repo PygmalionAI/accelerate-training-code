@@ -43,11 +43,21 @@ class DataCollatorForMmapedDataset():
             torch.tensor(instance["labels"].as_py()) for instance in instances
         ]
 
-        input_ids = torch.nn.utils.rnn.pad_sequence(
-            input_ids, batch_first=True, padding_value=self.pad_token_id)
-        labels = torch.nn.utils.rnn.pad_sequence(
-            labels, batch_first=True, padding_value=IGNORE_INDEX)
+        # NOTE(TG): Tensor cores are most efficient when dealing with tensor lengths that are multiples of 8.
+        # Therefore, we add a fake tensor to the batches so that rnn.pad_sequence
+        # will pad to that length.
+        input_ids_pad_tensor = self._create_fake_padding_tensor(input_ids)
+        labels_pad_tensor = self._create_fake_padding_tensor(labels)
 
+        input_ids = torch.nn.utils.rnn.pad_sequence(
+            [*input_ids, input_ids_pad_tensor], batch_first=True, padding_value=self.pad_token_id)
+        labels = torch.nn.utils.rnn.pad_sequence(
+            [*labels, labels_pad_tensor], batch_first=True, padding_value=IGNORE_INDEX)
+        
+        # (praying the fake tensor is always the last in the batch size)
+        input_ids = input_ids[:-1]
+        labels = labels[:-1]
+        
         return dict(
             input_ids=input_ids,
             labels=labels,
@@ -61,3 +71,19 @@ class DataCollatorForMmapedDataset():
             # attention_mask=input_ids.ne(self.pad_token_id),
             # attention_mask=labels.ne(IGNORE_INDEX),
         )
+    
+    def _create_fake_padding_tensor(self, sequences: torch.Tensor) -> torch.Tensor:
+        '''Makes a fake 'padding tensor' that has a length of a multiple of 8 to a sequence of tensors.'''
+        # https://stackoverflow.com/questions/72540912/find-the-biggest-of-two-pytorch-tensor-on-size
+        longest_seq_len = max(sequences, key=len).shape[0]
+
+        # Find closest multiple of 8 to the longest seq_len
+        if longest_seq_len % 8 != 0:
+            next_multiple = (longest_seq_len // 8 + 1) * 8
+        else:
+            # Make a fake tensor anyway so that we don't have to check
+            # in the main __call__ function to see if a fake tensor was added or not
+            next_multiple = longest_seq_len
+
+        fake_tensor = torch.ones((next_multiple), dtype=sequences[0].dtype)
+        return fake_tensor
