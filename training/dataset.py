@@ -54,6 +54,7 @@ class DataCollatorForMmapedDataset():
         labels = torch.nn.utils.rnn.pad_sequence(
             [*labels, labels_pad_tensor], batch_first=True, padding_value=IGNORE_INDEX)
         
+        # Remove fake tensor now that its purpose is served
         # (praying the fake tensor is always the last in the batch size)
         input_ids = input_ids[:-1]
         labels = labels[:-1]
