@@ -113,14 +113,33 @@ def _process_training_example(
     series: pd.Series,
     append_eos: bool = True,
 ) -> pd.Series:
+    # This is a single row so we _theoretically_ don't have to do this, but if
+    # we don't we get a scary warning.
+    # https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy
+    generation = series.loc["generation"]
+
     if append_eos:
-        series["generation"] += tokenizer.eos_token
+        # As it turns out, with LLaMA's tokenizer, if you just append EOS to the
+        # end of the text it gets tokenized as a "</s>" text literal, and not as
+        # token #2 which is the _actual_ EOS token. You must have a space before
+        # "</s>" so it becomes token #2 as expected.
+        #
+        # I found this out after wasting 60+ GPU hours training a broken model
+        # :)
+        if tokenizer.eos_token == "</s>":
+            generation += f" {tokenizer.eos_token}"
+        else:
+            generation += tokenizer.eos_token
 
     prompt_tokens = tokenizer(series["prompt"],
                               return_tensors="np").input_ids[0]
-    response_tokens = tokenizer(series["generation"],
-                                return_tensors="np").input_ids[0]
+    response_tokens = tokenizer(generation, return_tensors="np").input_ids[0]
     input_ids = np.concatenate([prompt_tokens, response_tokens], axis=-1)
+
+    # Let's not waste any more GPU time thanks to this.
+    if append_eos:
+        assert input_ids[-1].item() == tokenizer.eos_token_id, \
+            "EOS was not correctly appended to the end of the response tokens."
 
     prompt_length = prompt_tokens.shape[-1]
     labels = np.concatenate([
