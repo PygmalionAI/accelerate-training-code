@@ -189,8 +189,8 @@ def llama_forward(
     # [bsz, nh, t, hd]
 
     # Upcast value to fp32 so that xformers doesn't error out
-    if value.dtype != torch.float32:
-        value = value.to(torch.float32)
+    if value_states.dtype != torch.float32:
+        value_states = value_states.to(torch.float32)
 
     if past_key_value is not None:
         # reuse k, v, self_attention
