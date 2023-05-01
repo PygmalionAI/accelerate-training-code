@@ -46,7 +46,7 @@ class OtherArguments:
 
 @dataclass
 class LoraArguments:
-    use_lora: t.Optional[bool] = field(metadata={"help": "LoRA rank."},
+    use_lora: t.Optional[bool] = field(metadata={"help": "Whether to train a LoRA instead of the full model."},
                                        default=False)
     lora_rank: t.Optional[int] = field(metadata={"help": "LoRA rank."},
                                        default=4)
