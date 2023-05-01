@@ -95,7 +95,7 @@ def main() -> None:
         low_cpu_mem_usage=True,
         torch_dtype=model_load_dtype,
     ).cuda()
-    
+
     # Xformers optimization.
     if model_args.apply_xformers:
         assert XFORMERS_INSTALLED, "Xformers is not installed (properly)!"
@@ -156,6 +156,7 @@ def main() -> None:
         raise ex
 
     trainer.save_state()
+    trainer.save_model()
 
 
 if __name__ == "__main__":
