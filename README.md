@@ -13,6 +13,7 @@ Based on [HuggingFace's Trainer class](https://huggingface.co/docs/transformers/
   - [Start training](#start-training)
 - [Other features](#other-features)
   - [LoRA](#lora)
+  - [xFormers](#xformers)
 
 ## Usage
 
@@ -92,6 +93,7 @@ accelerate launch \
     --fp16 true \
     --evaluation_strategy "steps" --eval_steps 128 \
     --save_strategy "steps" --save_steps 128 \
+    --save_total_limit 2 \
     --gradient_accumulation_steps 8 \
     --learning_rate 1.0e-5 \
     --lr_scheduler_type "cosine" \
@@ -134,3 +136,7 @@ accelerate launch \
 
   model.save_pretrained(OUTPUT_DIR)
   ```
+
+### xFormers
+
+You can pass in `--use_xformers` to [hf_trainer.py](./training/hf_trainer.py) to use the `memory_efficient_attention` implementation from xFormers for GPT-J, NeoX and LLaMA-based models. **This has not been rigorously tested though**, so I encourage you to do a test run with/without the flag to check for strange behavior before using it on a complete training job.
