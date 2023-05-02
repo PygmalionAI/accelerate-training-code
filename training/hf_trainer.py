@@ -7,23 +7,12 @@ import transformers
 from dataset import DataCollatorForMmapedDataset, MmappedArrowDataset
 from profiling import ProfilerCallback, build_profiler_configuration
 
-try:
-    import xformers
-    # Though we don't use memory_efficient_attention here,
-    # xformers being installed wrong can lead to the possibility of it running "import xformers" normally,
-    # but fails at "from xformers.ops import memory_efficient_attention" with "no module named xformers.ops".
-    # Therefore we make 100% sure xformers is installed correctly by importing memory_efficient_attention directly.
-    from xformers.ops import memory_efficient_attention
-    XFORMERS_INSTALLED = True
-except ImportError:
-    XFORMERS_INSTALLED = False
-
 
 @dataclass
 class ModelArguments:
     model_name_or_path: t.Optional[str] = field(
         default="EleutherAI/pythia-70m-deduped")
-    apply_xformers: bool = field(default=False, metadata={"help": "Enable xformers optimizations for attention operations"})
+    use_xformers: bool = field(default=False, metadata={"help": "Use xFormers' memory_efficient_attention"})
 
 
 @dataclass
@@ -73,6 +62,11 @@ def main() -> None:
         use_fast=True,
     )
 
+    # xFormers optimizations.
+    if model_args.use_xformers:
+        from monkeypatches import apply_xformers_monkeypatches
+        apply_xformers_monkeypatches()
+
     if other_args.model_load_delay_per_rank is not None:
         # When working with constrained system memory, loading the model at the
         # exact same time on all training processes will likely fail due to all
@@ -95,12 +89,6 @@ def main() -> None:
         low_cpu_mem_usage=True,
         torch_dtype=model_load_dtype,
     ).cuda()
-
-    # Xformers optimization.
-    if model_args.apply_xformers:
-        assert XFORMERS_INSTALLED, "Xformers is not installed (properly)!"
-        from xformers_monkeypatching import apply_xformers_to_model
-        apply_xformers_to_model(model)
 
     # LoRA setup.
     if lora_args.use_lora:
