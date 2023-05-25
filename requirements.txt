@@ -1,5 +1,10 @@
-accelerate
+torch
 parallel_pandas
-peft
+git+https://github.com/huggingface/peft
 pyarrow
-transformers
+git+https://github.com/huggingface/transformers
+wandb
+deepspeed
+xformers
+scipy
+git+https://github.com/huggingface/accelerate
