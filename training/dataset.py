@@ -1,63 +1,69 @@
 import pyarrow as pa
 import torch
+
 from torch.utils.data import Dataset
 from transformers.tokenization_utils import PreTrainedTokenizer
 
 # NOTE(11b): Needs to be kept in sync with the data tokenization script.
 IGNORE_INDEX = -100
 
-
 class MmappedArrowDataset(Dataset):
 
-    def __init__(self, filepath: str):
+    def __init__(self, filepath: str, sft: bool = True) -> None:
         source = pa.memory_map(filepath, "r")
         reader = pa.ipc.RecordBatchFileReader(source)
         self.table = reader.read_all()
+        self.sft = sft
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.table)
-        return self.reader.num_record_batches
 
-    def __getitem__(self, idx):
-        return dict(
-            input_ids=self.table["input_ids"][idx],
-            labels=self.table["labels"][idx],
-        )
-        return self.reader.get_batch(idx)
-
+    def __getitem__(self, idx) -> dict:
+        if self.sft:
+            return dict(
+                input_ids=self.table["input_ids"][idx],
+                labels=self.table["labels"][idx]
+            )
+        else:
+            return dict(
+                input_ids=self.table["input_ids"][idx]
+            )
 
 class DataCollatorForMmapedDataset():
-
-    def __init__(self, tokenizer: PreTrainedTokenizer):
+    def __init__(self, tokenizer: PreTrainedTokenizer, sft: bool = True) -> None:
         self.tokenizer = tokenizer
+        self.sft = sft
         self.pad_token_id: int = self.tokenizer.pad_token_id \
             if self.tokenizer.pad_token_id else self.tokenizer.eos_token_id # type: ignore
 
-    def __call__(self, instances):
+    def __call__(self, instances) -> dict:
         input_ids = [
             torch.tensor(instance["input_ids"].as_py())
             for instance in instances
         ]
 
-        labels = [
-            torch.tensor(instance["labels"].as_py()) for instance in instances
-        ]
+        if self.sft:
+            labels = [
+                torch.tensor(instance["labels"].as_py()) for instance in instances
+            ]
 
         # NOTE(TG): Tensor cores are most efficient when dealing with tensor lengths that are multiples of 8.
         # Therefore, we add a fake tensor to the batches so that rnn.pad_sequence
         # will pad to that length.
         input_ids_pad_tensor = self._create_fake_padding_tensor(input_ids)
-        labels_pad_tensor = self._create_fake_padding_tensor(labels)
-
         input_ids = torch.nn.utils.rnn.pad_sequence(
             [*input_ids, input_ids_pad_tensor], batch_first=True, padding_value=self.pad_token_id)
-        labels = torch.nn.utils.rnn.pad_sequence(
-            [*labels, labels_pad_tensor], batch_first=True, padding_value=IGNORE_INDEX)
-        
         # Remove fake tensor now that its purpose is served
         # (praying the fake tensor is always the last in the batch size)
         input_ids = input_ids[:-1]
-        labels = labels[:-1]
+        
+        if self.sft:
+            labels_pad_tensor = self._create_fake_padding_tensor(labels)
+            labels = torch.nn.utils.rnn.pad_sequence(
+                [*labels, labels_pad_tensor], batch_first=True, padding_value=IGNORE_INDEX)
+            labels = labels[:-1]
+        else:
+            labels = None
         
         return dict(
             input_ids=input_ids,

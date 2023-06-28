@@ -197,6 +197,5 @@ def _process_training_example(
         "labels": labels,
     })
 
-
 if __name__ == "__main__":
     main()
