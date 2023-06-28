@@ -1,6 +1,6 @@
 # training-code
 
-This repository contains code to perform supervised fine-tuning of causal language models.
+This repository contains code to perform supervised or unsupervised fine-tuning of causal language models.
 
 Based on [HuggingFace's Trainer class](https://huggingface.co/docs/transformers/main_classes/trainer), with some extra goodies like optional xFormers and LoRA training.
 
@@ -14,6 +14,7 @@ Based on [HuggingFace's Trainer class](https://huggingface.co/docs/transformers/
 - [Other features](#other-features)
   - [LoRA](#lora)
   - [xFormers](#xformers)
+  - [Unsupervised fine-tuning](#unsupervised-fine-tuning)
 
 ## Usage
 
@@ -21,7 +22,7 @@ Based on [HuggingFace's Trainer class](https://huggingface.co/docs/transformers/
 
 `requirements.txt` should give you an idea of what you'll need - feel free to `pip install -r requirements.txt` or install things from source depending on which versions you want.
 
-Other packages not listed in `requirements.txt` might also be useful (e.g. `wandb`, `deepspeed` and so on).
+Other packages not listed in `requirements.txt` might also be useful (e.g. `wandb`, `deepspeed` and so on). You can run `pip install -r requirements-recommended.txt` for some of these packages (do note that xformers may be tricky to install properly at times).
 
 ### Prepare your training data
 
@@ -35,16 +36,16 @@ Here's an example of what a line might look like:
 
 ### Tokenize the data
 
-With the data in hand, you should use the [tokenize_data.py](./preparation/tokenize_data.py) script to tokenize it for the model you're going to be fine-tuning. For example:
+With the data in hand, you should use the [tokenize_data_sft.py](./preparation/tokenize_data_sft.py) script to tokenize it for the model you're going to be fine-tuning. For example:
 
 ```shell
-python3 ./preparation/tokenize_data.py \
+python3 ./preparation/tokenize_data_sft.py \
   --input-file '/data/train.jsonl' \
   --output-file '/data/train.pythia.arrow' \
   --tokenizer-path 'EleutherAI/pythia-410m-deduped' \
   --max-length 2048
 
-python3 ./preparation/tokenize_data.py \
+python3 ./preparation/tokenize_data_sft.py \
   --input-file '/data/eval.jsonl' \
   --output-file '/data/eval.pythia.arrow' \
   --tokenizer-path 'EleutherAI/pythia-410m-deduped' \
@@ -116,3 +117,28 @@ accelerate launch \
 ### xFormers
 
 You can pass in `--use_xformers` to [hf_trainer.py](./training/hf_trainer.py) to use the `memory_efficient_attention` implementation from xFormers for GPT-J, NeoX and LLaMA-based models. **This has not been rigorously tested on anything other than LLaMA though**, so I encourage you to do a test run with/without the flag to check for strange behavior before using it on a complete training job.
+
+### Unsupervised fine-tuning
+
+Although this repository is meant to be used for conversational fine-tunes which is usually done with a supervised fine-tuning regime, the repo now supports *unsupervised fine-tuning* as well. However, because this repo was built with supervised fine-tuning in mind, unsupervised fine-tuning is not enabled by default; you will need to manually enable it with the `--uft` flag when running [hf_trainer.py](./training/hf_trainer.py).
+
+For UFT, your data should be in either the form of a **singular .txt file or multiple .txt files contained within one directory**. Note that it will not skip over any .txt files in the directory, so avoid having any .txt files which you do not want the model to tokenize within the directory you provide. To tokenize unstructured data, run [tokenize_data_uft.py](./preparation/tokenize_data_uft.py) like this:
+
+```shell
+python3 ./preparation/tokenize_data_uft.py \
+  --input-file '/data/train.txt' \
+  --output-file '/data/train.pythia.arrow' \
+  --tokenizer-path 'EleutherAI/pythia-410m-deduped' \
+  --max-length 2048
+
+python3 ./preparation/tokenize_data_uft.py \
+  --input-file '/data/eval.txt' \
+  --output-file '/data/eval.pythia.arrow' \
+  --tokenizer-path 'EleutherAI/pythia-410m-deduped' \
+  --max-length 2048
+```
+
+Please note some things:
+
+- Much like SFT, .arrow files may take up a significantly larger amount of space on the disk than the original text files. Plan disk space accordingly.
+- EOS tokens will *not* be automatically applied at the end of a generation due to the nature of unsupervised fine-tuning.

@@ -41,12 +41,6 @@ class DataCollatorForMmapedDataset():
             torch.tensor(instance["input_ids"].as_py())
             for instance in instances
         ]
-
-        if self.sft:
-            labels = [
-                torch.tensor(instance["labels"].as_py()) for instance in instances
-            ]
-
         # NOTE(TG): Tensor cores are most efficient when dealing with tensor lengths that are multiples of 8.
         # Therefore, we add a fake tensor to the batches so that rnn.pad_sequence
         # will pad to that length.
@@ -58,6 +52,9 @@ class DataCollatorForMmapedDataset():
         input_ids = input_ids[:-1]
         
         if self.sft:
+            labels = [
+                torch.tensor(instance["labels"].as_py()) for instance in instances
+            ]
             labels_pad_tensor = self._create_fake_padding_tensor(labels)
             labels = torch.nn.utils.rnn.pad_sequence(
                 [*labels, labels_pad_tensor], batch_first=True, padding_value=IGNORE_INDEX)
