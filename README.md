@@ -142,3 +142,4 @@ Please note some things:
 
 - Much like SFT, .arrow files may take up a significantly larger amount of space on the disk than the original text files. Plan disk space accordingly.
 - EOS tokens will *not* be automatically applied at the end of a generation due to the nature of unsupervised fine-tuning.
+- UFT is a new feature and at the moment may be buggy or inefficient. Pull requests are welcomed.
