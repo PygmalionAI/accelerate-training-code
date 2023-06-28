@@ -8,7 +8,7 @@ from transformers.tokenization_utils import PreTrainedTokenizer
 IGNORE_INDEX = -100
 
 class MmappedArrowDataset(Dataset):
-
+    '''Memory-mapped PyArrow dataset.'''
     def __init__(self, filepath: str, sft: bool = True) -> None:
         source = pa.memory_map(filepath, "r")
         reader = pa.ipc.RecordBatchFileReader(source)

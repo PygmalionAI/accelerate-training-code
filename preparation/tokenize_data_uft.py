@@ -15,7 +15,7 @@ logging.basicConfig(
 
 def main() -> None:
     args = _parse_args_from_argv()
-    assert os.path.isfile(args.input_path) or os.path.isdir(args.input_path), f'File or directory \"{args.input_path}" not found!'
+    assert os.path.isfile(args.input_path) or os.path.isdir(args.input_path), f'File or directory \"{args.input_path}\" not found!'
 
     LOG.info("Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
@@ -66,7 +66,7 @@ def main() -> None:
     splitable_tkn_chunks = tokens[:closest_ctxlen_factor]
     remainder_tokens = tokens[closest_ctxlen_factor:]
 
-    # We do array_split rather than split here so that `tokens` will be the list type.
+    # We do array_split rather than split here so that `tokens` will have type `list`.
     tokens = np.array_split(splitable_tkn_chunks, (closest_ctxlen_factor / args.max_length))
 
     # ...then append what's left, if it's unevenly divided
@@ -78,6 +78,7 @@ def main() -> None:
     LOG.info(f"Dataset contains {num_tokens:,} tokens.")
 
 def _parse_args_from_argv() -> argparse.Namespace:
+    '''Parses arguments.'''
     parser = argparse.ArgumentParser(description="Dataset tokenizer utility.")
     parser.add_argument(
         "-i",
@@ -119,6 +120,13 @@ def _parse_args_from_argv() -> argparse.Namespace:
     return parser.parse_args()
 
 def _tokenize_file(tokenizer: PreTrainedTokenizer, filepath: str) -> np.array:
+    '''
+    Opens a singular text document and converts its contents into a large array of tokens.
+
+    Params:
+    tokenizer: The specific tokenizer used to tokenize the file.
+    filepath: The path to the text document that will be tokenized.
+    '''
     LOG.info(f"Loading file {filepath} into memory and tokenizing...")
     with open(filepath, "r", encoding="utf-8") as f:
         # Read the entire .txt file into memory.
@@ -129,6 +137,13 @@ def _tokenize_file(tokenizer: PreTrainedTokenizer, filepath: str) -> np.array:
     return tokenized_contents
 
 def _save_as_arrow_file(tokens: list[np.array], output_file: str) -> None:
+    '''
+    Saves a list of arrays with `context_length` length (unless it is not)
+
+    Params:
+    tokens: A list of numpy arrays containing tokens, each with a length of the model's context size.
+    output_file: The path of the file which will be saved.
+    '''
     LOG.info(f"Writing to arrow file and saving...")
     pa_arrays = [pa.array(t) for t in tokens]
     schema = pa.schema([pa.field('input_ids', pa_arrays[0].type)])
