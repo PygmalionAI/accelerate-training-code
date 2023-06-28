@@ -126,13 +126,13 @@ For UFT, your data should be in either the form of a **singular .txt file or mul
 
 ```shell
 python3 ./preparation/tokenize_data_uft.py \
-  --input-file '/data/train.txt' \
+  --input-path '/data/train.txt' \
   --output-file '/data/train.pythia.arrow' \
   --tokenizer-path 'EleutherAI/pythia-410m-deduped' \
   --max-length 2048
 
 python3 ./preparation/tokenize_data_uft.py \
-  --input-file '/data/eval.txt' \
+  --input-path '/data/eval.txt' \
   --output-file '/data/eval.pythia.arrow' \
   --tokenizer-path 'EleutherAI/pythia-410m-deduped' \
   --max-length 2048
