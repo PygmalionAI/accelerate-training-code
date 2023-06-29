@@ -67,7 +67,7 @@ def main() -> None:
     remainder_tokens = tokens[closest_ctxlen_factor:]
 
     # We do array_split rather than split here so that `tokens` will have type `list`.
-    tokens = np.array_split(splitable_tkn_chunks, (closest_ctxlen_factor / args.max_length))
+    tokens = np.array_split(splitable_tkn_chunks, (closest_ctxlen_factor // args.max_length))
 
     # ...then append what's left, if it's unevenly divided
     if num_tokens > closest_ctxlen_factor:
