@@ -30,9 +30,12 @@ class OtherArguments:
     enable_profiler: bool = field(
         metadata={"help": "Whether to profile the training loop."},
         default=False)
-    add_special_tokens: t.Optional[str] = field(metadata={
-        "help": "Extra special tokens to add to the tokenizer before training. Comma-separated."},
+    add_special_tokens: t.Optional[str] = field(
+        metadata={"help": "Extra special tokens to add to the tokenizer before training. Comma-separated."},
         default=None)
+    uft: bool = field(
+        metadata={"help": "Use unsupervised fine-tuning instead of supervised fine-tuning."},
+        default=False)
 
 
 @dataclass
@@ -96,7 +99,7 @@ def main() -> None:
 
     if other_args.add_special_tokens is not None:
         # MAINTENANCE(11b): Big fat warning: the snippet below is copy-pasted
-        # into ``./preparation/tokenize_data.py``. Make sure to always keep both
+        # into ``./preparation/tokenize_data_{sft,uft}.py``. Make sure to always keep both
         # implementations in sync.
         special_token_contents = other_args.add_special_tokens.split(",")
         special_tokens = [
@@ -143,9 +146,9 @@ def main() -> None:
         model.config.use_cache = False
 
     # Dataset setup.
-    train_dataset = MmappedArrowDataset(data_args.train_file)
-    eval_dataset = MmappedArrowDataset(data_args.eval_file)
-    data_collator = DataCollatorForMmapedDataset(tokenizer=tokenizer)
+    train_dataset = MmappedArrowDataset(data_args.train_file, sft=not other_args.uft)
+    eval_dataset = MmappedArrowDataset(data_args.eval_file, sft=not other_args.uft)
+    data_collator = DataCollatorForMmapedDataset(tokenizer=tokenizer, sft=not other_args.uft)
 
     trainer = transformers.Trainer(
         model=model,
