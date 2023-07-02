@@ -1,3 +1,5 @@
 deepspeed
+scikit-learn
+tqdm
 wandb
 xformers

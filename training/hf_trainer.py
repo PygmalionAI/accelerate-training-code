@@ -50,6 +50,17 @@ class LoraArguments:
                                             default=0.05)
     lora_target_modules: t.Optional[str] = field(metadata={"help": "Target modules, comma-separated."},
                                                  default=None)
+    
+@dataclass
+class MezoArguments:
+    use_mezo: t.Optional[bool] = field(metadata={"help": "Whether to use the MeZO optimizer rather than a traditional optimizer with backwards passes"},
+                                       default=False)
+    linear_probing: t.Optional[bool] = field(metadata={"help": "Use linear probing to tweak the LM head. NOTE: THIS WILL NOT START A RUN, YOU WILL NEED TO RERUN THIS SCRIPT AND LOAD THE MODEL FROM THE SAVED CHECKPOINT WITHOUT THIS OPTION ENABLED!"},
+                                       default=False)
+    zo_eps: t.Optional[float] = field(metadata={"help": "The EPS to use for zeroth-order optimization. Default is 1e-3"},
+                                      default=1e-3)
+    lp_early_stopping: t.Optional[bool] = field(metadata={"help": "Whether to stop the linear probing process early."},
+                                                default=False)
 
 
 def main() -> None:
@@ -58,15 +69,20 @@ def main() -> None:
         DataArguments,
         LoraArguments,
         OtherArguments,
+        MezoArguments,
         transformers.TrainingArguments,
     ))
     model_args, data_args, lora_args, \
-        other_args, training_args = parser.parse_args_into_dataclasses()
+        other_args, mezo_args, training_args = parser.parse_args_into_dataclasses()
+    
+    # OpenLLaMA's fast tokenizer is broken, so we have to specifically
+    # disable it in the case that OpenLLaMA is the model
+    is_openllama = "open_llama" in model_args.model_name_or_path
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
         padding_side="right",
-        use_fast=True,
+        use_fast=not is_openllama,
     )
 
     # xFormers optimizations.
@@ -150,15 +166,32 @@ def main() -> None:
     eval_dataset = MmappedArrowDataset(data_args.eval_file, sft=not other_args.uft)
     data_collator = DataCollatorForMmapedDataset(tokenizer=tokenizer, sft=not other_args.uft)
 
-    trainer = transformers.Trainer(
-        model=model,
-        tokenizer=tokenizer,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        data_collator=data_collator,
-        args=training_args,
-        callbacks=[SavePeftModelCallback] if lora_args.use_lora else None,
-    )
+    if not mezo_args.use_mezo:
+        trainer = transformers.Trainer(
+            model=model,
+            tokenizer=tokenizer,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            data_collator=data_collator,
+            args=training_args,
+            callbacks=[SavePeftModelCallback] if lora_args.use_lora else None,
+        )
+    # MeZO requires its own Trainer class
+    else:
+        from mezo import MeZOTrainer
+        trainer = MeZOTrainer(
+            model=model,
+            tokenizer=tokenizer,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            data_collator=data_collator,
+            args=training_args,
+            callbacks=[SavePeftModelCallback] if lora_args.use_lora else None,
+            use_mezo=True,
+            zo_eps=mezo_args.zo_eps,
+            linear_probing=mezo_args.linear_probing,
+            lp_early_stopping=mezo_args.lp_early_stopping,
+        )
 
     try:
         # Resume from checkpoint if we have any checkpoints automatically saved
