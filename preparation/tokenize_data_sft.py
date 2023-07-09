@@ -33,7 +33,11 @@ def main() -> None:
     )
 
     LOG.info("Loading tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
+    # OpenLLaMA's fast tokenizer is broken on the stable release of transformers.
+    # TODO(TG): When newest transformers version which has fixed tokenizer is released,
+    # do a version check.
+    is_openllama = 'open_llama' in args.tokenizer_path or 'open-llama' in args.tokenizer_path
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path, use_fast=not is_openllama)
 
     if args.add_special_tokens is not None:
         # MAINTENANCE(11b): Big fat warning: the snippet below is copy-pasted
@@ -84,6 +88,8 @@ def main() -> None:
 
     df = df.loc[df["input_ids"].map(len) <= args.max_length]
 
+    num_tokens = df["input_ids"].map(len).sum()
+
     LOG.info("Done! Converting into an Apache Arrow table...")
 
     # Convert the DataFrame of the training set into an Apache Arrow table and
@@ -95,7 +101,8 @@ def main() -> None:
         with pa.RecordBatchFileWriter(sink, table.schema) as writer:
             writer.write_table(table)
 
-    LOG.info("Finished.")
+    LOG.info(f"Done! Output file saved to {args.output_file}.")
+    LOG.info(f"Dataset contains {num_tokens:,} tokens.")
 
 
 def _parse_args_from_argv() -> argparse.Namespace:
