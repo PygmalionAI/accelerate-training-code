@@ -18,7 +18,11 @@ def main() -> None:
     assert os.path.isfile(args.input_path) or os.path.isdir(args.input_path), f'File or directory \"{args.input_path}\" not found!'
 
     LOG.info("Loading tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
+    # OpenLLaMA's fast tokenizer is broken on the stable release of transformers.
+    # TODO(TG): When newest transformers version which has fixed tokenizer is released,
+    # do a version check.
+    is_openllama = 'open_llama' in args.tokenizer_path or 'open-llama' in args.tokenizer_path
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path, use_fast=not is_openllama)
 
     if args.add_special_tokens is not None:
         # MAINTENANCE(11b): Big fat warning: the snippet below is copy-pasted
@@ -41,41 +45,27 @@ def main() -> None:
         
     # Check if it's a directory of .txt files or a specific file
     LOG.info("Done! About to tokenize file(s)...")
+
     if os.path.isfile(args.input_path):
-        tokens = _tokenize_file(tokenizer, args.input_path)
+        all_file_tokens, total_num_tokens = _tokenize_file(tokenizer, args.input_path, args.max_length)
     # Runs this if and only if args.input_path is a directory
     else:
         all_file_tokens: list[np.array] = []
+        total_num_tokens = 0
         # Find all .txt files from a directory which could potentially
         # contain other files.
         txt_files = filter(lambda x: x.endswith(".txt"), os.listdir(args.input_path))
         txt_files = [os.path.join(args.input_path, f) for f in txt_files]
 
-        # Obtain the list of token arrays...
+        # Obtain the list of token arrays
         for file in txt_files:
-            file_tokens = _tokenize_file(tokenizer, file)
-            all_file_tokens.append(file_tokens)
-    
-        # ...then concatenate it.
-        tokens = np.concatenate(all_file_tokens)
+            file_tokens, num_tokens = _tokenize_file(tokenizer, file, args.max_length)
+            all_file_tokens += file_tokens
+            total_num_tokens += num_tokens
 
-    num_tokens = len(tokens)
-
-    # Do some list slicing to capture chunks of `context_length` tokens...
-    closest_ctxlen_factor = (num_tokens // args.max_length) * args.max_length
-    splitable_tkn_chunks = tokens[:closest_ctxlen_factor]
-    remainder_tokens = tokens[closest_ctxlen_factor:]
-
-    # We do array_split rather than split here so that `tokens` will have type `list`.
-    tokens = np.array_split(splitable_tkn_chunks, (closest_ctxlen_factor // args.max_length))
-
-    # ...then append what's left, if it's unevenly divided
-    if num_tokens > closest_ctxlen_factor:
-        tokens.append(remainder_tokens)
-
-    _save_as_arrow_file(tokens, args.output_file)
+    _save_as_arrow_file(all_file_tokens, args.output_file)
     LOG.info(f"Done! Output file saved to {args.output_file}.")
-    LOG.info(f"Dataset contains {num_tokens:,} tokens.")
+    LOG.info(f"Dataset contains {total_num_tokens:,} tokens.")
 
 def _parse_args_from_argv() -> argparse.Namespace:
     '''Parses arguments.'''
@@ -119,7 +109,7 @@ def _parse_args_from_argv() -> argparse.Namespace:
 
     return parser.parse_args()
 
-def _tokenize_file(tokenizer: PreTrainedTokenizer, filepath: str) -> np.array:
+def _tokenize_file(tokenizer: PreTrainedTokenizer, filepath: str, max_length: int, append_eos: bool = True) -> tuple[list[np.array], int]:
     '''
     Opens a singular text document and converts its contents into a large array of tokens.
 
@@ -128,13 +118,38 @@ def _tokenize_file(tokenizer: PreTrainedTokenizer, filepath: str) -> np.array:
     filepath: The path to the text document that will be tokenized.
     '''
     LOG.info(f"Loading file {filepath} into memory and tokenizing...")
+
+    is_llama = tokenizer.eos_token == "</s>"
+    
     with open(filepath, "r", encoding="utf-8") as f:
         # Read the entire .txt file into memory.
         # Good luck!
-        tokenized_contents = tokenizer(f.read(), return_tensors="np").input_ids[0]
+        file_contents = f.read()
+        if append_eos:
+            if is_llama:
+                file_contents += f" {tokenizer.eos_token}"
+            else:
+                file_contents += tokenizer.eos_token
+
+        tokenized_contents = tokenizer(file_contents, return_tensors="np").input_ids[0]
+
+    num_tokens = len(tokenized_contents)
+
+    # Do some list slicing to capture chunks of `context_length` tokens...
+    closest_ctxlen_factor = (num_tokens // max_length) * max_length
+    splitable_tkn_chunks = tokenized_contents[:closest_ctxlen_factor]
+    remainder_tokens = tokenized_contents[closest_ctxlen_factor:]
+
+    # We do array_split rather than split here so that `tokens` will have type `list`.
+    tokenized_contents = np.array_split(splitable_tkn_chunks, (closest_ctxlen_factor // max_length))
+
+    # ...then append what's left, if it's unevenly divided
+    if num_tokens > closest_ctxlen_factor:
+        tokenized_contents.append(remainder_tokens)
     
     LOG.info(f"Done! File {filepath} has been tokenized.")
-    return tokenized_contents
+
+    return tokenized_contents, num_tokens
 
 def _save_as_arrow_file(tokens: list[np.array], output_file: str) -> None:
     '''
