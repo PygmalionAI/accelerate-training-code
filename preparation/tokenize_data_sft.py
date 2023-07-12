@@ -95,11 +95,20 @@ def main() -> None:
     # Convert the DataFrame of the training set into an Apache Arrow table and
     # write out as a file that can be mmapped at training time.
     table = pa.Table.from_pandas(df)
+    schema = pa.schema([
+        pa.field('input_ids', pa.list_(pa.int32())),
+        pa.field('labels', pa.list_(pa.int32()))
+    ])
 
     LOG.info("Writing out tokenized dataset...")
     with pa.OSFile(args.output_file, 'wb') as sink:
-        with pa.RecordBatchFileWriter(sink, table.schema) as writer:
-            writer.write_table(table)
+        with pa.RecordBatchFileWriter(sink, schema) as writer:
+            #writer.write_table(table)
+            for row in df.itertuples(index=False):
+                # Create a RecordBatch with a singular entry.
+                batch = pa.RecordBatch.from_pylist([{"input_ids": row.input_ids, "labels": row.labels}])
+                writer.write_batch(batch)
+
 
     LOG.info(f"Done! Output file saved to {args.output_file}.")
     LOG.info(f"Dataset contains {num_tokens:,} tokens.")

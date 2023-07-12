@@ -160,14 +160,13 @@ def _save_as_arrow_file(tokens: list[np.array], output_file: str) -> None:
     output_file: The path of the file which will be saved.
     '''
     LOG.info(f"Writing to arrow file and saving...")
-    pa_arrays = [pa.array(t) for t in tokens]
-    schema = pa.schema([pa.field('input_ids', pa_arrays[0].type)])
+    schema = pa.schema([pa.field('input_ids', type=pa.list_(pa.int64()))])
 
     with pa.OSFile(output_file, 'wb') as sink:
         with pa.ipc.new_file(sink, schema=schema) as writer:
-            for chunk in pa_arrays:
-                batch = pa.record_batch([chunk], schema=schema)
-                writer.write(batch)
+            for tkn_chunk in tokens:
+                batch = pa.RecordBatch.from_pylist([{"input_ids": tkn_chunk}])
+                writer.write_batch(batch)
 
 if __name__ == "__main__":
     main()

@@ -11,25 +11,22 @@ class MmappedArrowDataset(Dataset):
     '''Memory-mapped PyArrow dataset.'''
     def __init__(self, filepath: str, sft: bool = True) -> None:
         source = pa.memory_map(filepath, "r")
-        reader = pa.ipc.RecordBatchFileReader(source)
-        self.table = reader.read_all()
+        self.reader = pa.ipc.RecordBatchFileReader(source)
         self.sft = sft
 
     def __len__(self) -> int:
-        if self.sft:
-            return len(self.table)
-        else:
-            return self.table["input_ids"].num_chunks
+        return self.reader.num_record_batches
 
     def __getitem__(self, idx) -> dict:
+        # TODO(TG): This is an abomination.
         if self.sft:
             return dict(
-                input_ids=self.table["input_ids"][idx],
-                labels=self.table["labels"][idx]
+                input_ids=self.reader.get_batch(idx)['input_ids'][0],
+                labels=self.reader.get_batch(idx)['labels'][0]
             )
         else:
             return dict(
-                input_ids=self.table["input_ids"].chunk(idx)
+                input_ids=self.reader.get_batch(idx)['input_ids'][0]
             )
 
 class DataCollatorForMmapedDataset():
