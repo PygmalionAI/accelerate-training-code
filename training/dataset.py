@@ -37,18 +37,18 @@ class DataCollatorForMmapedDataset():
             if self.tokenizer.pad_token_id else self.tokenizer.eos_token_id # type: ignore
 
     def __call__(self, instances) -> dict:
-        if self.sft:
-            input_ids = [
-                torch.tensor(instance["input_ids"].as_py())
-                for instance in instances
-            ]
-        else:
+        #if self.sft:
+        input_ids = [
+            torch.tensor(instance["input_ids"].as_py())
+            for instance in instances
+        ]
+        #else:
             # Int64Array has a different method to convert itself
             # to a native Python list.
-            input_ids = [
-                torch.tensor(instance["input_ids"].to_pylist())
-                for instance in instances
-            ]
+        #    input_ids = [
+        #        torch.tensor(instance["input_ids"].to_pylist())
+        #        for instance in instances
+        #    ]
         
         # NOTE(TG): Tensor cores are most efficient when dealing with tensor lengths that are multiples of 8.
         # Therefore, we add a fake tensor to the batches so that rnn.pad_sequence
