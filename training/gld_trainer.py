@@ -216,6 +216,7 @@ class GLDTrainer(Trainer):
         # self.model_wrapped is DDP(Transformers Model), Deepspeed(Transformers Model), etc.
 
         # Get model to optimize
+        self.named_parameters_to_optim = []
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 self.named_parameters_to_optim.append((name, param))
@@ -401,7 +402,7 @@ class GLDTrainer(Trainer):
                 ):
                     # MeZO added: update model with the estimated gradient
                     if self.use_gld:
-                        self.gld_update(model)
+                        self.gld_update()
                     else:
                         # Gradient clipping
                         if args.max_grad_norm is not None and args.max_grad_norm > 0:
@@ -561,14 +562,15 @@ class GLDTrainer(Trainer):
         Do steps.
         """
         # (loss, seed, scale)
-        self.losses: list[tuple[float, int, float]] = []
+        self.losses: list[tuple[float, int, t.Optional[float]]] = []
 
         # UNCOMMENT THIS FIRST IF THINGS GO BAD
         self.gld_seed = np.random.randint(1000000000)
         
         # Do one forwards pass without modifying parameters
-        loss_metrics = self.do_trial(model=model, inputs=inputs, scale=radius)
-        self.losses.append(loss_metrics)
+        loss = self.gld_forward(model=model, inputs=inputs)
+
+        self.losses.append((loss, self.gld_seed, None))
         # Now conduct ball sampling trials
         for radius in self.search_space:
             trial = (2 ** (-1 * radius)) * self.max_radius
@@ -586,18 +588,19 @@ class GLDTrainer(Trainer):
         # Perturb the parameters with the result which led to the lowest loss
         torch.manual_seed(self.gld_seed)
         # Almost the same as perturbing parameters but adding additional stuff
-        for n, p in self.named_parameters_to_optim:
+        for n, p in self.model.named_parameters():
             # NOTE: If things go wrong, do - instead of +
             # Then: add LR, weight decay
-            v_k = torch.normal(mean=0, std=1, size=p.data.size(), device=p.data.device, type=p.data.dtype)
-            # TODO(TG): Determine whether I need to add weight decay and as such
-            # have this conditional be there. Obviously this conditional
-            # doing the same thing no matter what is temporary
-            if _list_not_in_name(NO_WD_PARAM_NAMES, n):
-                # Add WD? LR?
-                p.data = p.data + (self.best_scale * v_k)
-            else:
-                p.data = p.data + (self.best_scale * v_k)
+            if self.best_scale is not None:
+                v_k = torch.normal(mean=0, std=1, size=p.data.size(), device=p.data.device, type=p.data.dtype)
+                # TODO(TG): Determine whether I need to add weight decay and as such
+                # have this conditional be there. Obviously this conditional
+                # doing the same thing no matter what is temporary
+                if _list_not_in_name(NO_WD_PARAM_NAMES, n):
+                    # Add WD? LR?
+                    p.data = p.data + (self.best_scale * v_k)
+                else:
+                    p.data = p.data + (self.best_scale * v_k)
 
         self.lr_scheduler.step()
 
@@ -612,12 +615,12 @@ class GLDTrainer(Trainer):
 
         return loss, self.gld_seed, scale
     
-    def perturb_parameters(self, scale: float, seed: t.Optional[int]) -> None:
+    def perturb_parameters(self, scale: float, seed: t.Optional[int] = None) -> None:
         # UNCOMMENT THIS FIRST IF THINGS GO BAD
         torch.manual_seed(seed if seed is not None else self.gld_seed)
 
         for _, p in self.named_parameters_to_optim:
-            v_k = torch.normal(mean=0, std=1, size=p.data.size(), device=p.data.device, type=p.data.dtype)
+            v_k = torch.normal(mean=0, std=1, size=p.data.size(), device=p.data.device, dtype=p.data.dtype)
             p.data = p.data + (scale * v_k) # Add additional EPS argument for stability?
 
 NO_WD_PARAM_NAMES = [
