@@ -5,7 +5,9 @@ from dataclasses import dataclass, field
 
 import torch
 import transformers
+
 from dataset import DataCollatorForMmapedDataset, MmappedArrowDataset
+from gld_trainer import GLDTrainer
 from profiling import ProfilerCallback, build_profiler_configuration
 
 
@@ -50,18 +52,29 @@ class LoraArguments:
                                             default=0.05)
     lora_target_modules: t.Optional[str] = field(metadata={"help": "Target modules, comma-separated."},
                                                  default=None)
-
-
+    
+@dataclass
+class GldArguments:
+    use_gld: t.Optional[bool] = field(metadata={"help": "Use gradientless descent as the optimizer"},
+                                      default=False)
+    num_ball_samples: t.Optional[int] = field(metadata={"help": "Number of ball samples"},
+                                      default=3)
+    min_radius: t.Optional[float] = field(metadata={"help": "Minimum radius"},
+                                      default=2)
+    max_radius: t.Optional[float] = field(metadata={"help": "Maximum radius"},
+                                      default=4)
+    
 def main() -> None:
     parser = transformers.HfArgumentParser((
         ModelArguments,
         DataArguments,
         LoraArguments,
         OtherArguments,
+        GldArguments,
         transformers.TrainingArguments,
     ))
     model_args, data_args, lora_args, \
-        other_args, training_args = parser.parse_args_into_dataclasses()
+        other_args, gld_args, training_args = parser.parse_args_into_dataclasses()
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
@@ -150,15 +163,30 @@ def main() -> None:
     eval_dataset = MmappedArrowDataset(data_args.eval_file, sft=not other_args.uft)
     data_collator = DataCollatorForMmapedDataset(tokenizer=tokenizer, sft=not other_args.uft)
 
-    trainer = transformers.Trainer(
-        model=model,
-        tokenizer=tokenizer,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        data_collator=data_collator,
-        args=training_args,
-        callbacks=[SavePeftModelCallback] if lora_args.use_lora else None,
-    )
+    if not gld_args.use_gld:
+        trainer = transformers.Trainer(
+            model=model,
+            tokenizer=tokenizer,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            data_collator=data_collator,
+            args=training_args,
+            callbacks=[SavePeftModelCallback] if lora_args.use_lora else None,
+        )
+    else:
+        trainer = GLDTrainer(
+            model=model,
+            tokenizer=tokenizer,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            data_collator=data_collator,
+            args=training_args,
+            callbacks=[SavePeftModelCallback] if lora_args.use_lora else None,
+            use_gld=True,
+            min_radius=gld_args.min_radius,
+            max_radius=gld_args.max_radius,
+            num_ball_samples=gld_args.num_ball_samples
+        )
 
     try:
         # Resume from checkpoint if we have any checkpoints automatically saved

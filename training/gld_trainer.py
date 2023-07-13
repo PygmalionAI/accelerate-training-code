@@ -599,6 +599,8 @@ class GLDTrainer(Trainer):
             else:
                 p.data = p.data + (self.best_scale * v_k)
 
+        self.lr_scheduler.step()
+
     def do_trial(self, model: nn.Module, inputs: t.Any, scale: float) -> tuple:
         self.gld_seed = np.random.randint(1000000000)
         # Perturb the parameters
