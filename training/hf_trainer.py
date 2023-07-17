@@ -178,7 +178,7 @@ def main() -> None:
         )
     # MeZO requires its own Trainer class
     else:
-        from mezo import MeZOTrainer
+        from mezo_trainer import MeZOTrainer
         trainer = MeZOTrainer(
             model=model,
             tokenizer=tokenizer,
