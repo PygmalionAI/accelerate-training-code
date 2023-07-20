@@ -1,4 +1,5 @@
 accelerate
+aphrodite
 parallel_pandas
 peft
 pyarrow

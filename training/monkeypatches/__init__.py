@@ -1,4 +1,7 @@
+import aphrodite
 import transformers
+
+from monkeypatches.aphrodite_patch import GPTNeoXWithLoss
 from monkeypatches.xformers_gpt import (gpt2_wrapped_scaled_dot_product,
                                         gpt_merge_heads)
 from monkeypatches.xformers_llama import llama_attention_forward
@@ -15,3 +18,6 @@ def apply_xformers_monkeypatches() -> None:
     # NeoX
     transformers.models.gpt_neox.modeling_gpt_neox.GPTNeoXAttention._attn = gpt2_wrapped_scaled_dot_product
     transformers.models.gpt_neox.modeling_gpt_neox.GPTNeoXAttention._merge_heads = gpt_merge_heads
+
+def apply_aphrodite_monkeypatches() -> None:
+    aphrodite.modeling.models.GPTNeoXWithCausalLM = GPTNeoXWithLoss
