@@ -11,6 +11,9 @@ from profiling import ProfilerCallback, build_profiler_configuration
 
 @dataclass
 class ModelArguments:
+    low_cpu_mem_usage: bool = field(
+        metadata={"help": "Try to reduce CPU memory usage while loading the model."},
+        default=True)
     model_name_or_path: t.Optional[str] = field(
         default="EleutherAI/pythia-70m-deduped")
     use_xformers: bool = field(default=False, metadata={"help": "Use xFormers' memory_efficient_attention"})
@@ -93,7 +96,7 @@ def main() -> None:
 
     model = transformers.AutoModelForCausalLM.from_pretrained(
         model_args.model_name_or_path,
-        low_cpu_mem_usage=True,
+        low_cpu_mem_usage=model_args.low_cpu_mem_usage,
         torch_dtype=model_load_dtype,
     ).cuda()
 

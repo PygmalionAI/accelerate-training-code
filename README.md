@@ -92,6 +92,7 @@ accelerate launch \
     --dataloader_num_workers 1 \
     --per_device_train_batch_size "$BSZ" --per_device_eval_batch_size "$BSZ" \
     --fp16 true \
+    --low_cpu_mem_usage true \
     --evaluation_strategy "steps" --eval_steps 128 \
     --save_strategy "steps" --save_steps 128 \
     --save_total_limit 2 \
