@@ -132,68 +132,6 @@ class MeZOOptimizer:
         if sign:
             z = z.sign()
         return z
-    
-# Modifications of MeZO to include stuff
-# such as momentum and Adam
-
-class MeZOMomentum(MeZOOptimizer):
-    def __init__(self, trainer: Trainer, model: nn.Module, momentum_factor: float = 0.9, nesterov: bool = False) -> None:
-        super().__init__(trainer, model)
-        self.momentums = [None for _ in trainer._train_batch_size]
-        self.momentum_factor = momentum_factor
-        self.nesterov = nesterov
-
-    def step(self, inputs: dict) -> torch.Tensor:
-        args = self.trainer.args
-        # Reset seeds, gradients and losses
-        self.losses = []
-        self.projected_grads = []
-        self.random_seeds = []
-
-        # Do a step for every entry in the batch
-        for i in range(self.batch_size):
-            # Fetch input from data, unsqueezing necessary because model wants tensor of shape
-            # (batch_size, context_len)
-            entry = {
-                "input_ids": inputs['input_ids'][i].unsqueeze(0),
-                "labels": inputs['labels'][i].unsqueeze(0),
-            }
-            # Generate seed for sampling z
-            seed = np.random.randint(1000000000)
-
-            # First function evaluation
-            self._perturb_parameters(random_seed=seed, scaling_factor=1)
-            loss1 = self._forward_pass(entry)
-
-            # Second function evaluation
-            self._perturb_parameters(random_seed=seed, scaling_factor=-2)
-            loss2 = self._forward_pass(entry)
-
-            # Calculate and normalize grad
-            self.projected_grad = ((loss1 - loss2) / (2 * self.eps)).item()
-            self.projected_grad = self._log_normalize(self.projected_grad)
-
-            # Apply momentum
-            if self.momentums[i] is not None:
-                self.momentums[i] = (self.momentum_factor * self.momentums[i]) + self.projected_grad
-            else:
-                self.momentums[i] = self.projected_grad
-
-            if self.nesterov:
-                self.projected_grad += self.momentum_factor * self.momentums[i]
-            else:
-                self.projected_grad = self.momentums[i]
-
-            # Reset model back to its parameters at start of step
-            self._perturb_parameters(random_seed=seed, scaling_factor=1)
-
-            # Append things
-            self.losses.append(loss1)
-            self.projected_grads.append(self.projected_grad)
-            self.random_seeds.append(seed)
-
-        # Return the average of the original losses
-        return torch.mean(torch.tensor(self.losses, device=args.device, dtype=torch.float32, requires_grad=False))
 
 # Utils
 
