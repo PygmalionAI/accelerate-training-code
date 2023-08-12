@@ -3,3 +3,5 @@ parallel_pandas
 peft
 pyarrow
 transformers
+git+https://github.com/facebookresearch/xformers
+wandb
