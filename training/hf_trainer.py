@@ -16,6 +16,7 @@ class ModelArguments:
         default=True)
     model_name_or_path: t.Optional[str] = field(
         default="EleutherAI/pythia-70m-deduped")
+    use_flash_attention: bool = field(default=False, metadata={"help": "Use flash attention (only supported on certain GPUs)"})
     use_xformers: bool = field(default=False, metadata={"help": "Use xFormers' memory_efficient_attention"})
 
 
@@ -72,7 +73,12 @@ def main() -> None:
         use_fast=True,
     )
 
-    # xFormers optimizations.
+    # Monkeypatches.
+    assert not (model_args.use_flash_attention and model_args.use_xformers), "Cannot use both xformers and flash attention at once!"
+    if model_args.use_flash_attention:
+        from monkeypatches import apply_fa_monkeypatches
+        apply_fa_monkeypatches()
+        
     if model_args.use_xformers:
         from monkeypatches import apply_xformers_monkeypatches
         apply_xformers_monkeypatches()

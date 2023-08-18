@@ -1,8 +1,13 @@
 import transformers
+from monkeypatches.flash_attention_llama import llama_fa_forward, _fa_prepare_decoder_attention_mask
 from monkeypatches.xformers_gpt import (gpt2_wrapped_scaled_dot_product,
                                         gpt_merge_heads)
 from monkeypatches.xformers_llama import llama_attention_forward
 
+def apply_fa_monkeypatches() -> None:
+    # LLaMA
+    transformers.models.llama.modeling_llama.LlamaModel._prepare_decoder_attention_mask = _fa_prepare_decoder_attention_mask
+    transformers.models.llama.modeling_llama.LlamaAttention.forward = llama_fa_forward
 
 def apply_xformers_monkeypatches() -> None:
     # LLaMA
